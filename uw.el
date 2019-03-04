@@ -69,8 +69,7 @@
   "Submit the URL-encoded request-data to link synchronously, returning the buffer"
   (let ((url-request-method "POST")
         (url-request-extra-headers
-         '(("Content-Type" . "application/x-www-form-urlencoded")
-           ("Referer" . "https://idp.u.washington.edu/")))
+         '(("Content-Type" . "application/x-www-form-urlencoded")))
         (url-request-data request-data))
     (url-retrieve-synchronously link)))
 
@@ -111,14 +110,12 @@ Returns the login action URL"
   (when (functionp 'url-cookie-delete-cookies)
     (url-cookie-delete-cookies "uw\\.edu")
     (url-cookie-delete-cookies "washington\\.edu"))
-  ;; URL module follows up to 30 redirects by default, but lets make sure
-  (let ((url-max-redirections 5))
-    (with-current-buffer (url-retrieve-synchronously uw-login-link)
-      (uw-unentitize-current-buffer)
-      (uw-find-form-action))))
+  (with-current-buffer (url-retrieve-synchronously uw-login-link)
+    (uw-unentitize-current-buffer)
+    (uw-find-form-action)))
 
 (defun uw-login nil
-  "Perform NetID login. Performs pre-login first"
+  "Perform NetID login. Performs pre-login first. Returns whether login succeeded"
   (let ((uw-login-action (uw-pre-login)))
     (with-current-buffer
         (uw-submit-urlencoded-form
@@ -138,18 +135,14 @@ Returns the login action URL"
   "Display messages based on whether a decision has been made yet.
 This is the primary user-facing function of the UW Portal checker package."
   (interactive)
+  (unless (and
+           (bound-and-true-p uw-netid-username)
+           (bound-and-true-p uw-netid-password))
+    (error "uw-netid-username and uw-netid-password must be set"))
   (with-current-buffer (uw-status-page)
-    ;; don't *really* need this, but good practice?
-    (save-excursion
-      (goto-char (point-min))
-      (message "%s" (if (search-forward uw-undecided-text nil t)
-                        "No decision has been made."
-                      "PORTAL UPDATED!!!! Only the best of luck.")))))
-
-;; THE REST OF THIS FILE IS NOT ORIGINAL CODE
-;; IT IS COPIED FROM THE EMACS GIT TREE
-;; This is because, at the time of writing, it has not been included in an
-;; emacs release yet but contains critical bug fixes for the handling of 302
-;; redirects in the URL library
-
-(defun url-http-parse-headers () "Parse and handle HTTP specific headers.Return t if and only if the current buffer is still active andshould be shown to the user."  (url-http-mark-connection-as-free (url-host url-current-object)				    (url-port url-current-object)				    url-http-process)  (when (gnutls-available-p)    (let ((status (gnutls-peer-status url-http-process)))      (when (or status		(plist-get (car url-callback-arguments) :peer))	(setcar url-callback-arguments		(plist-put (car url-callback-arguments)			   :peer status)))))  (if (or (not (boundp 'url-http-end-of-headers))	  (not url-http-end-of-headers))      (error "Trying to parse headers in odd buffer: %s" (buffer-name)))  (goto-char (point-min))  (url-http-debug "url-http-parse-headers called in (%s)" (buffer-name))  (url-http-parse-response)  (mail-narrow-to-head)  (let ((connection (mail-fetch-field "Connection")))    (cond     ((string= url-http-response-version "1.0")      (unless (and connection		   (string= (downcase connection) "keep-alive"))	(delete-process url-http-process)))     (t      (when (and connection		 (string= (downcase connection) "close"))	(delete-process url-http-process)))))  (let* ((buffer (current-buffer))         (class (/ url-http-response-status 100))         (success nil)         (status-symbol (cadr (assq url-http-response-status url-http-codes))))    (url-http-debug "Parsed HTTP headers: class=%d status=%d"                    class url-http-response-status)    (when (url-use-cookies url-http-target-url)      (url-http-handle-cookies))    (pcase class      (1				       (url-mark-buffer-as-dead buffer)       (error "HTTP responses in class 1xx not supported (%d)"              url-http-response-status))      (2				       (pcase status-symbol	 ((or 'no-content 'reset-content)		  (url-mark-buffer-as-dead buffer))	 (_			  (widen)	  (if (and url-automatic-caching (equal url-http-method "GET"))	      (url-store-in-cache buffer))))       (setq success t))      (3				       (let ((redirect-uri (or (mail-fetch-field "Location")			       (mail-fetch-field "URI"))))	 (pcase status-symbol	   ('multiple-choices	    																    nil)           ('found							    (setq url-http-method "GET"		  url-http-data nil))           ('see-other							    (setq url-http-method "GET"		  url-http-data nil))	   ('not-modified				    (url-http-debug "Extracting document from cache... (%s)"			    (url-cache-create-filename (url-view-url t)))	    (url-cache-extract (url-cache-create-filename (url-view-url t)))	    (setq redirect-uri nil		  success t))	   ('use-proxy									    (error "Redirection thru a proxy server not supported: %s"		   redirect-uri))	   (_		    nil))	 (when redirect-uri		   (if (string-match "\\([^ \t]+\\)[ \t]" redirect-uri)	       (setq redirect-uri (match-string 1 redirect-uri)))	   (if (string-match "^<\\(.*\\)>$" redirect-uri)	       (setq redirect-uri (match-string 1 redirect-uri)))				   (if (not (string-match url-nonrelative-link redirect-uri))	       (setq redirect-uri		     (url-expand-file-name redirect-uri url-http-target-url)))				   (setq url-http-extra-headers		 (cl-remove "Authorization"			    url-http-extra-headers :key 'car :test 'equal))           (let ((url-request-method url-http-method)		 (url-request-data url-http-data)		 (url-request-extra-headers url-http-extra-headers))		     (if (or (< url-max-redirections 0)		     (and (> url-max-redirections 0)			  (let ((events (car url-callback-arguments))				(old-redirects 0))			    (while events			      (if (eq (car events) :redirect)				  (setq old-redirects (1+ old-redirects)))			      (and (setq events (cdr events))				   (setq events (cdr events))))			    (< old-redirects url-max-redirections))))						 (progn				   (setf (car url-callback-arguments)			 (nconc (list :redirect redirect-uri)				(car url-callback-arguments)))														   (set (make-local-variable 'url-redirect-buffer)			(url-retrieve-internal			 redirect-uri url-callback-function			 url-callback-arguments			 (url-silent url-current-object)			 (not (url-use-cookies url-current-object))))		   (url-mark-buffer-as-dead buffer))			       (url-http-debug "Maximum redirections reached")	       (setf (car url-callback-arguments)		     (nconc (list :error (list 'error 'http-redirect-limit					       redirect-uri))			    (car url-callback-arguments)))	       (setq success t))))))      (4				       (setq success             (pcase status-symbol               ('unauthorized			                (url-http-handle-authentication nil))               ('payment-required                              (url-mark-buffer-as-dead buffer)                (error "Somebody wants you to give them money"))               ('forbidden			                t)               ('not-found			                t)               ('method-not-allowed		                t)               ('not-acceptable		                t)               ('proxy-authentication-required                 (url-http-handle-authentication t))               ('request-timeout		                t)               ('conflict			                t)               ('gone                                          t)               ('length-required		                t)               ('precondition-failed		                t)               ((or 'request-entity-too-large 'request-uri-too-large)                 t)               ('unsupported-media-type	                t)               ('requested-range-not-satisfiable                 t)               ('expectation-failed		                t)               (_                t)))       (when success	 (setf (car url-callback-arguments)	       (nconc (list :error (list 'error 'http url-http-response-status))		      (car url-callback-arguments)))))      (5       (setq success t)       (pcase url-http-response-status	 ('not-implemented					  nil)	 ('bad-gateway							  nil)	 ('service-unavailable										  nil)	 ('gateway-timeout								  nil)	 ('http-version-not-supported					  nil)	 ('insufficient-storage										  nil))       (when success	 (setf (car url-callback-arguments)	       (nconc (list :error (list 'error 'http url-http-response-status))		      (car url-callback-arguments)))))      (_       (error "Unknown class of HTTP response code: %d (%d)"	      class url-http-response-status)))    (if (not success)	(url-mark-buffer-as-dead buffer)      (url-handle-content-transfer-encoding))    (url-http-debug "Finished parsing HTTP headers: %S" success)    (widen)    (goto-char (point-min))success))
+    ;; we could use save-excursion and save-match-data here, but that buffer
+    ;; will never be used again, so why bother?
+    (goto-char (point-min))
+    (message "%s" (if (search-forward uw-undecided-text nil t)
+                      "No decision has been made."
+                    "PORTAL UPDATED!!!! Only the best of luck."))))
