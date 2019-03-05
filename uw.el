@@ -21,9 +21,9 @@
 ;;       uw-netid-password "hunter2")
 ;; 3. Setup is done! M-x uw-check to see if your portal has updated yet!
 
-;; vaiables that should be overridden
 (defvar uw-netid-username nil "University of Washington NetID login")
 (defvar uw-netid-password nil "University of Washington NetID password")
+(defvar uw-bind-keys t "Whether to bind C-c C-u C-w to checking the portal")
 
 ;; variables that typically shouldn't be overridden but are documented anyway
 (defconst uw--login-link "https://my.uw.edu/"
@@ -156,3 +156,6 @@ This is the primary user-facing function of the UW Portal checker package."
     (message "%s" (if (search-forward uw--undecided-text nil t)
                       "No decision has been made."
                     "PORTAL UPDATED!!!! Only the best of luck."))))
+
+(when uw-bind-keys
+  (global-set-key (kbd "C-c C-u C-w") 'uw-check))
